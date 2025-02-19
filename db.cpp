@@ -30,38 +30,47 @@ enum StatementPrepareState {
     PREPARE_UNRECOGNIZED
 };
 
+/// @brief Represents the outcome of reading input from console.
+enum InputResult {
+    SUCCESS,
+    EOF_REACHED,
+    STREAM_ERROR,
+    INVALID_INPUT
+};
+
 /// @brief Prepare the display for taking the input.
 void display_prompt() {
     cout << PROMPT;
 }
 
-void read_input(InputBuffer& input_buffer) {
+InputResult read_input(InputBuffer& input_buffer) {
     // check if input stream is ready for taking input, eg due to error flags
     // being set or EOF condition
     if (!cin.good()) {
-        cout << "Input stream not ready for taking input, exiting..." << endl;
-        exit(EXIT_FAILURE);
+        cerr << "Input stream not ready for taking input, exiting..." << endl;
+        return InputResult::STREAM_ERROR;
     }
 
     // read the input
     // Successfully captured the input
     if (getline(cin, input_buffer.buffer)) {
         input_buffer.input_size = input_buffer.buffer.size();
+        return InputResult::SUCCESS;
     }
+
     // Either an error of EOF case: Premature end of input using
     // Ctrl + D (Unix) or Ctrl + Z (Windows)
-    else if (cin.eof()) {
+    if (cin.eof()) {
         cout << "EOF reached, input stream closed prematurely, exiting..." << endl;
         input_buffer.input_size = 0;
         // clear the error state
         cin.clear();
-        return;
+        return InputResult::EOF_REACHED;
     }
-    else {
-        cout << "Unexpected error while reading input, exiting..." << endl;
-        input_buffer.input_size = -1;
-        exit(EXIT_FAILURE);
-    }
+
+    cout << "Unexpected error while reading input, exiting..." << endl;
+    input_buffer.input_size = -1;
+    return InputResult::INVALID_INPUT;
 }
 
 void repl_loop() {
@@ -71,18 +80,37 @@ void repl_loop() {
 
     while (true) {
         display_prompt();
-        // get the input
-        read_input(input_buffer);
-        
-        cout << "Input: " << input_buffer.buffer << "Size: " << input_buffer.input_size << endl;
 
-        if (input_buffer.buffer == "exit") {
-            cout << "Exiting..." << endl;
-            exit(EXIT_SUCCESS);
+        // get the input
+        InputResult input_res = read_input(input_buffer);
+        
+        if (input_res != InputResult::SUCCESS) {
+            cerr << "Error reading input, exiting..." << endl;
+            exit(EXIT_FAILURE);
         }
-        else {
-            cout << "Unrecognized command: " << input_buffer.buffer << endl;
+
+        if (input_buffer.buffer.size() == 0) {
+            cout << "Empty input, please try again..." << endl;
+            continue;
         }
+
+        cout << "Input: " << input_buffer.buffer << "Size: " << input_buffer.input_size << endl;
+        
+        // Handle meta commands, meta commands start with a '.' character
+        if (input_buffer.buffer[0] == '.') {
+            
+            if (input_buffer.buffer == ".exit") {
+                cout << "Exiting..." << endl;
+                exit(EXIT_SUCCESS);
+            }
+            else {
+                cout << "Unrecognized command: " << input_buffer.buffer << endl;
+            }
+        }
+        
+
+        // Handle Sql statement commands
+        
     }
 }
 
