@@ -1,15 +1,36 @@
 #include <iostream>
+#include <string>
 using namespace std;
 
 /// Display constants
 const string PROMPT = "> ";
     
-
+/// @brief Console Input representation
 struct InputBuffer {
     streamsize input_size = -1;
     string buffer;
 };
 
+/// @brief Represents the state of the meta command
+enum MetaCommandState {
+    META_COMMAND_SUCCESS,
+    META_COMMAND_UNRECOGNIZED
+};
+
+/// @brief Represents the various SQL statements
+enum StatementCommand {
+    STATEMENT_SELECT,
+    STATEMENT_INSERT,
+    STATEMENT_DELETE
+};
+
+/// @brief Represents the state of prepare statement operation.
+enum StatementPrepareState {
+    PREPARE_SUCCESS,
+    PREPARE_UNRECOGNIZED
+};
+
+/// @brief Prepare the display for taking the input.
 void display_prompt() {
     cout << PROMPT;
 }
@@ -44,9 +65,9 @@ void read_input(InputBuffer& input_buffer) {
 }
 
 void repl_loop() {
-    string input;
-
     InputBuffer input_buffer;
+
+    cout << "Starting REPL loop..." << endl;
 
     while (true) {
         display_prompt();
