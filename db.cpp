@@ -12,7 +12,7 @@ struct InputBuffer {
 };
 
 /// @brief Represents the state of the meta command
-enum MetaCommandState {
+enum MetaCommandResult {
     META_COMMAND_SUCCESS,
     META_COMMAND_UNRECOGNIZED
 };
@@ -21,7 +21,8 @@ enum MetaCommandState {
 enum StatementCommand {
     STATEMENT_SELECT,
     STATEMENT_INSERT,
-    STATEMENT_DELETE
+    STATEMENT_DELETE,
+    STATEMENT_UNRECOGNIZED
 };
 
 /// @brief Represents the state of prepare statement operation.
@@ -73,6 +74,33 @@ InputResult read_input(InputBuffer& input_buffer) {
     return InputResult::INVALID_INPUT;
 }
 
+MetaCommandResult run_metacommand(string& cmd) {
+    if (cmd == ".exit") {
+        cout << "Encountered exit, exiting..." << endl;
+        exit(EXIT_SUCCESS);
+    }
+    else {
+        return MetaCommandResult::META_COMMAND_UNRECOGNIZED;
+    }
+}
+
+
+pair<StatementPrepareState, StatementCommand> prepare_statement_command(string& cmd) {
+    if (cmd == "insert")
+        return { PREPARE_SUCCESS, StatementCommand::STATEMENT_INSERT };
+    else if (cmd == "select")
+        return { PREPARE_SUCCESS, StatementCommand::STATEMENT_SELECT };
+    else if (cmd == "delete")
+        return { PREPARE_SUCCESS, StatementCommand::STATEMENT_DELETE };
+    else
+        return { PREPARE_UNRECOGNIZED, StatementCommand::STATEMENT_UNRECOGNIZED };
+}
+
+bool execute_statement(StatementCommand statement) {
+    cout << "Statement " << statement << " executed successfully..." << endl;
+    return true;
+}
+
 void repl_loop() {
     InputBuffer input_buffer;
 
@@ -98,19 +126,30 @@ void repl_loop() {
         
         // Handle meta commands, meta commands start with a '.' character
         if (input_buffer.buffer[0] == '.') {
-            
-            if (input_buffer.buffer == ".exit") {
-                cout << "Exiting..." << endl;
-                exit(EXIT_SUCCESS);
-            }
-            else {
-                cout << "Unrecognized command: " << input_buffer.buffer << endl;
+            switch (run_metacommand(input_buffer.buffer)) {
+                case MetaCommandResult::META_COMMAND_SUCCESS:
+                    continue;
+                case MetaCommandResult::META_COMMAND_UNRECOGNIZED:
+                    cout << "Unrecognized command: " << input_buffer.buffer << endl;
+                    continue;
             }
         }
         
+        // Prepare the statement commands which can then be executed
+        // Here the idea is to convert the string to a more code friendly semantic
+        // Eg converting "insert" to StatementCommand::STATEMENT_INSERT
+        auto [prepare_state, statement] = prepare_statement_command(input_buffer.buffer);
 
-        // Handle Sql statement commands
-        
+        switch (prepare_state) {
+            case PREPARE_SUCCESS:
+                break;
+            case PREPARE_UNRECOGNIZED:
+                cout << "Unrecognized statement: " << input_buffer.buffer << endl;
+                continue;
+        }
+
+        // Once the statement preparation is completed, execute it
+        execute_statement(statement);
     }
 }
 
