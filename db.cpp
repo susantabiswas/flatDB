@@ -1,15 +1,16 @@
+#include <cstdint>
 #include <iostream>
 #include <string>
 using namespace std;
 
 /// Display constants
 const string PROMPT = "> ";
-    
-/// @brief Console Input representation
-struct InputBuffer {
-    streamsize input_size = -1;
-    string buffer;
-};
+
+/*
+* Row layout related constants
+*/
+const uint16_t USERNAME_SIZE = 32;
+const uint16_t EMAIL_SIZE = 255;
 
 /// @brief Represents the state of the meta command
 enum MetaCommandResult {
@@ -28,6 +29,7 @@ enum StatementCommand {
 /// @brief Represents the state of prepare statement operation.
 enum StatementPrepareState {
     PREPARE_SUCCESS,
+    PREPARE_INVALID_SYNTAX,
     PREPARE_UNRECOGNIZED
 };
 
@@ -37,6 +39,23 @@ enum InputResult {
     EOF_REACHED,
     STREAM_ERROR,
     INVALID_INPUT
+};
+
+/// @brief Console Input representation
+struct InputBuffer {
+    streamsize input_size = -1;
+    string buffer;
+};
+
+struct Row {
+    long long id;
+    char username[USERNAME_SIZE];
+    char email[EMAIL_SIZE];
+};
+
+struct Statement {
+    StatementCommand statement_command;
+    Row row;
 };
 
 /// @brief Prepare the display for taking the input.
@@ -85,20 +104,47 @@ MetaCommandResult run_metacommand(string& cmd) {
 }
 
 
-pair<StatementPrepareState, StatementCommand> prepare_statement_command(string& cmd) {
-    if (cmd == "insert")
-        return { PREPARE_SUCCESS, StatementCommand::STATEMENT_INSERT };
-    else if (cmd == "select")
-        return { PREPARE_SUCCESS, StatementCommand::STATEMENT_SELECT };
+pair<StatementPrepareState, Statement> prepare_statement_command(string& cmd) {
+    Statement statement;
+
+    // parse the statement
+    if (cmd.substr(0, 6) == "insert") {
+        // Syntax: insert id username email
+        int assigned = sscanf(
+            cmd.c_str(), 
+            "insert %lld %s %s", &statement.row.id, &statement.row.username, &statement.row.email);
+
+        if (assigned < 3) {
+            return { PREPARE_INVALID_SYNTAX, statement };
+        }
+        statement.statement_command = STATEMENT_INSERT;
+        return { PREPARE_SUCCESS, statement };
+    }
+    else if (cmd == "select") {
+        // Syntax: select
+        statement.statement_command = STATEMENT_SELECT;
+        return { PREPARE_SUCCESS, statement };
+    }
     else if (cmd == "delete")
-        return { PREPARE_SUCCESS, StatementCommand::STATEMENT_DELETE };
+        return { PREPARE_SUCCESS, statement };
     else
-        return { PREPARE_UNRECOGNIZED, StatementCommand::STATEMENT_UNRECOGNIZED };
+        return { PREPARE_UNRECOGNIZED, statement };
 }
 
-bool execute_statement(StatementCommand statement) {
-    cout << "Statement " << statement << " executed successfully..." << endl;
-    return true;
+bool execute_statement(Statement statement) {
+    cout << "Statement " << statement.statement_command << " executed successfully..." << endl;
+
+    switch (statement.statement_command) {
+        case STATEMENT_INSERT:
+            break;
+        case STATEMENT_SELECT:
+            break;
+        case STATEMENT_DELETE:
+            break;
+        case STATEMENT_UNRECOGNIZED:
+            break;
+    }
+    return false;
 }
 
 void repl_loop() {
