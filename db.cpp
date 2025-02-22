@@ -3,19 +3,33 @@
 #include <string>
 using namespace std;
 
+#define size_of_attribute(Struct, Attribute) sizeof(((Struct*)0)->Attribute)
+
 /// Display constants
 const string PROMPT = "> ";
 
 /*
-* Row layout related constants
+* Column size constants
 */
-const uint16_t USERNAME_SIZE = 32;
-const uint16_t EMAIL_SIZE = 255;
+const uint16_t USERNAME_LENGTH = 32;
+const uint16_t EMAIL_LENGTH = 255;
+
+/*
+*   Table and Page size
+*/
+const uint16_t PAGE_SIZE = 4 * 1024; // 4KB
+const uint16_t TABLE_MAX_PAGES = 1000;
 
 /// @brief Represents the state of the meta command
 enum MetaCommandResult {
     META_COMMAND_SUCCESS,
     META_COMMAND_UNRECOGNIZED
+};
+
+enum ExecuteResult {
+    EXECUTE_SUCCESS,
+    EXECUTE_TABLE_FULL,
+    EXECUTE_FAILURE
 };
 
 /// @brief Represents the various SQL statements
@@ -49,14 +63,67 @@ struct InputBuffer {
 
 struct Row {
     long long id;
-    char username[USERNAME_SIZE];
-    char email[EMAIL_SIZE];
+    char username[USERNAME_LENGTH];
+    char email[EMAIL_LENGTH];
 };
 
 struct Statement {
     StatementCommand statement_command;
     Row row;
 };
+
+struct Table {
+    uint32_t num_rows;
+    // Free list of pages
+    // Each entry points to a memory page which
+    // is nothing but a block of memory and multiple rows
+    // can be stored in it.
+    void* pages[TABLE_MAX_PAGES]; 
+};
+
+/*
+*   Row layout related
+*/
+const uint32_t ID_SIZE = size_of_attribute(Row, id);
+const uint32_t ID_OFFSET = 0;
+const uint32_t USERNAME_SIZE = size_of_attribute(Row, username);
+const uint32_t USERNAME_OFFSET = ID_OFFSET + ID_SIZE;
+const uint32_t EMAIL_SIZE = size_of_attribute(Row, email);
+const uint32_t EMAIL_OFFSET = USERNAME_OFFSET + USERNAME_SIZE;
+const uint32_t ROW_SIZE = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
+
+/*
+* Storage related constants
+*/
+const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
+const uint32_t TABLE_MAX_ROWS = TABLE_MAX_PAGES * ROWS_PER_PAGE;
+
+/*
+*   Factory methods
+*/
+Table create_table_factory() {
+    Table table;
+    table.num_rows = 0;
+
+    for(uint32_t i = 0; i < TABLE_MAX_PAGES; i++)
+        table.pages[i] = nullptr;
+    return table;
+}
+
+/*
+*   Row and Table related operations
+*/
+void write_row(void* row_slot, Row& row) {
+    memcpy(row_slot + ID_OFFSET, &(row.id), ID_SIZE);
+    memcpy(row_slot + USERNAME_OFFSET, &(row.username), USERNAME_SIZE);
+    memcpy(row_slot + EMAIL_OFFSET, &(row.email), EMAIL_SIZE);
+}
+
+void read_row(void* row_slot, Row& row) {
+    memcpy(&(row.id), row_slot + ID_OFFSET, ID_SIZE);
+    memcpy(&(row.username), row_slot + USERNAME_OFFSET, USERNAME_SIZE);
+    memcpy(&(row.email), row_slot + EMAIL_OFFSET, EMAIL_SIZE);
+}
 
 /// @brief Prepare the display for taking the input.
 void display_prompt() {
@@ -103,7 +170,6 @@ MetaCommandResult run_metacommand(string& cmd) {
     }
 }
 
-
 pair<StatementPrepareState, Statement> prepare_statement_command(string& cmd) {
     Statement statement;
 
@@ -131,24 +197,59 @@ pair<StatementPrepareState, Statement> prepare_statement_command(string& cmd) {
         return { PREPARE_UNRECOGNIZED, statement };
 }
 
-bool execute_statement(Statement statement) {
+void* get_free_row_slot(Table& table) {
+    // NOTE: For now, we take the row index as the
+    // next row after the last inserted row
+    int32_t row_num = table.num_rows;
+    int32_t page_idx = row_num / ROWS_PER_PAGE;
+
+    void* page = table.pages[page_idx];
+
+    if (page == nullptr) {
+        page = malloc(PAGE_SIZE);
+    }
+
+    uint32_t row_offset = row_num % ROWS_PER_PAGE;
+    uint32_t byte_offset = row_offset * ROW_SIZE;
+
+    return page + byte_offset;
+}
+
+ExecuteResult execute_insert(Statement& statement, Table& table) {
+    if (table.num_rows >= TABLE_MAX_ROWS) {
+        cout << "[ERROR] Table is full" << endl;
+        return EXECUTE_TABLE_FULL;
+    }
+
+    // find a free slot in the table
+    void* row_slot = get_free_row_slot(table);
+    write_row(row_slot, statement.row);
+    ++table.num_rows;
+
+    Row row;
+    read_row(row_slot, row);
+
+    cout << row.id << " " << row.username << " " << row.email << endl;
+    return EXECUTE_SUCCESS;
+}
+
+ExecuteResult execute_statement(Statement statement, Table& table) {
     cout << "Statement " << statement.statement_command << " executed successfully..." << endl;
 
     switch (statement.statement_command) {
         case STATEMENT_INSERT:
-            break;
+            execute_insert(statement, table);
+            return EXECUTE_SUCCESS;
         case STATEMENT_SELECT:
-            break;
+            return EXECUTE_SUCCESS;
         case STATEMENT_DELETE:
-            break;
-        case STATEMENT_UNRECOGNIZED:
-            break;
+            return EXECUTE_SUCCESS;
     }
-    return false;
 }
 
 void repl_loop() {
     InputBuffer input_buffer;
+    Table table = create_table_factory();
 
     cout << "Starting REPL loop..." << endl;
 
@@ -158,6 +259,7 @@ void repl_loop() {
         // get the input
         InputResult input_res = read_input(input_buffer);
         
+        // Handle input result cases
         if (input_res != InputResult::SUCCESS) {
             cerr << "Error reading input, exiting..." << endl;
             exit(EXIT_FAILURE);
@@ -168,7 +270,7 @@ void repl_loop() {
             continue;
         }
 
-        cout << "Input: " << input_buffer.buffer << "Size: " << input_buffer.input_size << endl;
+        cout << "Input: " << input_buffer.buffer << "Size: ," << input_buffer.input_size << endl;
         
         // Handle meta commands, meta commands start with a '.' character
         if (input_buffer.buffer[0] == '.') {
@@ -189,13 +291,23 @@ void repl_loop() {
         switch (prepare_state) {
             case PREPARE_SUCCESS:
                 break;
+            case PREPARE_INVALID_SYNTAX:
+                cout << "Invalid Syntax: " << input_buffer.buffer << endl;
+                continue;
             case PREPARE_UNRECOGNIZED:
                 cout << "Unrecognized statement: " << input_buffer.buffer << endl;
                 continue;
         }
 
         // Once the statement preparation is completed, execute it
-        execute_statement(statement);
+        switch(execute_statement(statement, table)) {
+            case EXECUTE_SUCCESS:
+                cout << "Statement executed successfully..." << endl;
+                break;
+            case EXECUTE_TABLE_FULL:
+                cout << "Table is full, cannot insert the row..." << endl;
+                break;
+        }
     }
 }
 
