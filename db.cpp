@@ -197,21 +197,23 @@ pair<StatementPrepareState, Statement> prepare_statement_command(string& cmd) {
         return { PREPARE_UNRECOGNIZED, statement };
 }
 
-void* get_free_row_slot(Table& table) {
+void* get_row_slot(int32_t row_num, Table& table) {
     // NOTE: For now, we take the row index as the
     // next row after the last inserted row
-    int32_t row_num = table.num_rows;
     int32_t page_idx = row_num / ROWS_PER_PAGE;
 
     void* page = table.pages[page_idx];
 
     if (page == nullptr) {
         page = malloc(PAGE_SIZE);
+        // since the page is allocated memory, set the address
+        table.pages[page_idx] = page;
     }
 
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
     uint32_t byte_offset = row_offset * ROW_SIZE;
 
+    cout << "Table: " << &table << ", RowAddrs: " << page + byte_offset << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
     return page + byte_offset;
 }
 
@@ -222,14 +224,26 @@ ExecuteResult execute_insert(Statement& statement, Table& table) {
     }
 
     // find a free slot in the table
-    void* row_slot = get_free_row_slot(table);
+    void* row_slot = get_row_slot(table.num_rows, table);
     write_row(row_slot, statement.row);
     ++table.num_rows;
 
     Row row;
     read_row(row_slot, row);
 
-    cout << row.id << " " << row.username << " " << row.email << endl;
+    cout <<"[INSERT] Row_idx: " << row_slot << ", Id: " << row.id << " " << row.username << " " << row.email << endl;
+    
+    return EXECUTE_SUCCESS;
+}
+
+ExecuteResult execute_select_all(Table& table) {
+    Row row;
+
+    for(uint32_t i = 0; i < table.num_rows; i++) {
+        read_row(get_row_slot(i, table), row);
+        cout <<"[READ] Row_idx: " << get_row_slot(i, table) << ", Id: " << row.id << " " << row.username << " " << row.email << endl;
+    }
+
     return EXECUTE_SUCCESS;
 }
 
@@ -238,10 +252,9 @@ ExecuteResult execute_statement(Statement statement, Table& table) {
 
     switch (statement.statement_command) {
         case STATEMENT_INSERT:
-            execute_insert(statement, table);
-            return EXECUTE_SUCCESS;
+            return execute_insert(statement, table);
         case STATEMENT_SELECT:
-            return EXECUTE_SUCCESS;
+            return execute_select_all(table);
         case STATEMENT_DELETE:
             return EXECUTE_SUCCESS;
     }
@@ -270,7 +283,7 @@ void repl_loop() {
             continue;
         }
 
-        cout << "Input: " << input_buffer.buffer << "Size: ," << input_buffer.input_size << endl;
+        cout << "Input: " << input_buffer.buffer << ", size: " << input_buffer.input_size << endl;
         
         // Handle meta commands, meta commands start with a '.' character
         if (input_buffer.buffer[0] == '.') {
