@@ -1,2 +1,2 @@
 # mem-sql
-In memory, file based SQL compliant database like Sqlite
+A simple flat file database like sqlite.
