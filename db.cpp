@@ -1,6 +1,9 @@
 #include <cstdint>
+#include <cstring>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <vector>
 using namespace std;
 
 #define size_of_attribute(Struct, Attribute) sizeof(((Struct*)0)->Attribute)
@@ -44,6 +47,9 @@ enum StatementCommand {
 enum StatementPrepareState {
     PREPARE_SUCCESS,
     PREPARE_INVALID_SYNTAX,
+    PREPARE_TOKEN_TOO_LONG,
+    PREPARE_NULL_TOKEN,
+    PREPARE_TOKEN_NEGATIVE,
     PREPARE_UNRECOGNIZED
 };
 
@@ -63,8 +69,8 @@ struct InputBuffer {
 
 struct Row {
     long long id;
-    char username[USERNAME_LENGTH];
-    char email[EMAIL_LENGTH];
+    char username[USERNAME_LENGTH + 1]; // +1 for null terminator
+    char email[EMAIL_LENGTH + 1]; // +1 for null terminator
 };
 
 struct Statement {
@@ -108,6 +114,15 @@ Table create_table_factory() {
     for(uint32_t i = 0; i < TABLE_MAX_PAGES; i++)
         table.pages[i] = nullptr;
     return table;
+}
+
+void free_table(Table& table) {
+    for(uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
+        if (table.pages[i] != nullptr) {
+            free(table.pages[i]);
+            table.pages[i] = nullptr;
+        }
+    }
 }
 
 /*
@@ -170,21 +185,66 @@ MetaCommandResult run_metacommand(string& cmd) {
     }
 }
 
+vector<string> tokenize_string(string& str, char delimiter = ' ') {
+    istringstream ss(str);
+    string token;
+
+    vector<string> tokens;
+
+    while (std::getline(ss, token, delimiter)) {
+        tokens.push_back(token);
+    }
+
+    return tokens;
+}
+
+pair<StatementPrepareState, Statement> prepare_insert(string& cmd) {
+    Statement statement;
+
+    vector<string> tokens = tokenize_string(cmd, ' ');
+
+    // Syntax: insert id username email
+    if (tokens.size() < 4) {
+        cerr << "Too few arguments for insert statement" << endl;
+        return { PREPARE_INVALID_SYNTAX, statement };
+    }
+
+    for(string token: tokens) {
+        if (token.empty()) {
+            cerr << "Empty token found" << endl;
+            return { PREPARE_NULL_TOKEN, statement };
+        }
+    }
+
+    if (tokens[2].size() > USERNAME_LENGTH || tokens[3].size() > EMAIL_LENGTH) {
+        cerr << (tokens[2].size() > USERNAME_LENGTH ? "Username" : "Email") << " too long" << endl;
+        return { PREPARE_TOKEN_TOO_LONG, statement };
+    }
+    
+    statement.row.id = stoll(tokens[1]);
+
+    if (statement.row.id < 0) {
+        cerr << "ID cannot be negative" << endl;
+        return { PREPARE_TOKEN_NEGATIVE, statement };
+    }
+
+    strncpy(statement.row.username, tokens[2].c_str(), USERNAME_LENGTH);
+    strncpy(statement.row.email, tokens[3].c_str(), EMAIL_LENGTH);
+
+    // explictly null terminate the str to avoid any issues
+    statement.row.username[USERNAME_LENGTH] = '\0';
+    statement.row.email[EMAIL_LENGTH] = '\0';
+
+    statement.statement_command = STATEMENT_INSERT;
+    return { PREPARE_SUCCESS, statement };
+}
+
 pair<StatementPrepareState, Statement> prepare_statement_command(string& cmd) {
     Statement statement;
 
     // parse the statement
     if (cmd.substr(0, 6) == "insert") {
-        // Syntax: insert id username email
-        int assigned = sscanf(
-            cmd.c_str(), 
-            "insert %lld %s %s", &statement.row.id, &statement.row.username, &statement.row.email);
-
-        if (assigned < 3) {
-            return { PREPARE_INVALID_SYNTAX, statement };
-        }
-        statement.statement_command = STATEMENT_INSERT;
-        return { PREPARE_SUCCESS, statement };
+        return prepare_insert(cmd);
     }
     else if (cmd == "select") {
         // Syntax: select
@@ -307,6 +367,15 @@ void repl_loop() {
             case PREPARE_INVALID_SYNTAX:
                 cout << "Invalid Syntax: " << input_buffer.buffer << endl;
                 continue;
+            case PREPARE_TOKEN_TOO_LONG:
+                cout << "Token too long: " << input_buffer.buffer << endl;
+                continue;
+            case PREPARE_NULL_TOKEN:
+                cout << "Null token found: " << input_buffer.buffer << endl;
+                continue;
+            case PREPARE_TOKEN_NEGATIVE:
+                cout << "Negative token found: " << input_buffer.buffer << endl;
+                continue;
             case PREPARE_UNRECOGNIZED:
                 cout << "Unrecognized statement: " << input_buffer.buffer << endl;
                 continue;
@@ -321,6 +390,8 @@ void repl_loop() {
                 cout << "Table is full, cannot insert the row..." << endl;
                 break;
         }
+
+        free_table(table);
     }
 }
 
