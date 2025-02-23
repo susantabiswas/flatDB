@@ -129,15 +129,15 @@ void free_table(Table& table) {
 *   Row and Table related operations
 */
 void write_row(void* row_slot, Row& row) {
-    memcpy(row_slot + ID_OFFSET, &(row.id), ID_SIZE);
-    memcpy(row_slot + USERNAME_OFFSET, &(row.username), USERNAME_SIZE);
-    memcpy(row_slot + EMAIL_OFFSET, &(row.email), EMAIL_SIZE);
+    memcpy((char*)row_slot + ID_OFFSET, &(row.id), ID_SIZE);
+    memcpy((char*)row_slot + USERNAME_OFFSET, &(row.username), USERNAME_SIZE);
+    memcpy((char*)row_slot + EMAIL_OFFSET, &(row.email), EMAIL_SIZE);
 }
 
 void read_row(void* row_slot, Row& row) {
-    memcpy(&(row.id), row_slot + ID_OFFSET, ID_SIZE);
-    memcpy(&(row.username), row_slot + USERNAME_OFFSET, USERNAME_SIZE);
-    memcpy(&(row.email), row_slot + EMAIL_OFFSET, EMAIL_SIZE);
+    memcpy(&(row.id), (char*)row_slot + ID_OFFSET, ID_SIZE);
+    memcpy(&(row.username), (char*)row_slot + USERNAME_OFFSET, USERNAME_SIZE);
+    memcpy(&(row.email), (char*)row_slot + EMAIL_OFFSET, EMAIL_SIZE);
 }
 
 /// @brief Prepare the display for taking the input.
@@ -273,8 +273,10 @@ void* get_row_slot(int32_t row_num, Table& table) {
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
     uint32_t byte_offset = row_offset * ROW_SIZE;
 
-    cout << "Table: " << &table << ", RowAddrs: " << page + byte_offset << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
-    return page + byte_offset;
+    cout << "Table: " << &table << ", RowAddrs: " << static_cast<char*>(page) + byte_offset << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
+    // NOTE: Ptr arithmetic doesnt work on void*, since char* is 1 byte, we cast it to char*
+    // and it is implictly casted to void* when returned
+    return static_cast<char*>(page) + byte_offset;
 }
 
 ExecuteResult execute_insert(Statement& statement, Table& table) {
@@ -318,6 +320,8 @@ ExecuteResult execute_statement(Statement statement, Table& table) {
         case STATEMENT_DELETE:
             return EXECUTE_SUCCESS;
     }
+
+    return EXECUTE_FAILURE;
 }
 
 void repl_loop() {
