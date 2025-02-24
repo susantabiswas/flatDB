@@ -6,3 +6,8 @@ run: db
 
 test: db
 	bundle exec rspec
+
+clean: db
+	del db.exe
+
+.PHONY: run test clean
