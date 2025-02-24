@@ -303,7 +303,8 @@ ExecuteResult execute_insert(Statement& statement, Table& table) {
     Row row;
     read_row(row_slot, row);
 
-    cout <<"[INSERT] Id: " << row.id << " " << row.username << " " << row.email << endl;
+    if (DEBUG_MODE)
+        cout <<"[INSERT] Id: " << row.id << " " << row.username << " " << row.email << endl;
     
     return EXECUTE_SUCCESS;
 }
@@ -313,7 +314,7 @@ ExecuteResult execute_select_all(Table& table) {
 
     for(uint32_t i = 0; i < table.num_rows; i++) {
         read_row(get_row_slot(i, table), row);
-        cout <<"[SELECT] Row_idx: " << get_row_slot(i, table) << ", Id: " << row.id << " " << row.username << " " << row.email << endl;
+        cout <<"[SELECT] Id: " << row.id << " " << row.username << " " << row.email << endl;
     }
 
     return EXECUTE_SUCCESS;
@@ -329,8 +330,6 @@ ExecuteResult execute_statement(Statement statement, Table& table) {
         case STATEMENT_DELETE:
             return EXECUTE_SUCCESS;
     }
-
-    cout << "Statement " << statement.statement_command << " executed successfully..." << endl;
 
     return EXECUTE_FAILURE;
 }
@@ -349,12 +348,12 @@ void repl_loop() {
         
         // Handle input result cases
         if (input_res != InputResult::SUCCESS) {
-            cerr << "Error reading input, exiting..." << endl;
+            cerr << "Error reading input, exiting." << endl;
             exit(EXIT_FAILURE);
         }
 
         if (input_buffer.buffer.size() == 0) {
-            cout << "Empty input, please try again..." << endl;
+            cout << "Empty input, please try again." << endl;
             continue;
         }
 
@@ -400,9 +399,10 @@ void repl_loop() {
         // Once the statement preparation is completed, execute it
         switch(execute_statement(statement, table)) {
             case EXECUTE_SUCCESS:
+                cout << "Executed successfully." << endl;
                 break;
             case EXECUTE_TABLE_FULL:
-                cout << "Table is full, cannot insert the row..." << endl;
+                cout << "Table is full, cannot insert the row." << endl;
                 break;
         }
     }
@@ -416,7 +416,7 @@ void parse_main_args(int argc, char** argv) {
         cout << arg << endl;
         if(arg == "--debug" || arg == "-d") {
             DEBUG_MODE = true;
-            cout << "Debug mode enabled..." << endl;
+            cout << "Debug mode enabled." << endl;
         }
     }
 }
