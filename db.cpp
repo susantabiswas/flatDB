@@ -140,6 +140,10 @@ void read_row(void* row_slot, Row& row) {
     memcpy(&(row.email), (char*)row_slot + EMAIL_OFFSET, EMAIL_SIZE);
 }
 
+void print_row(Row& row) {
+    cout << "[Row] ID: " << row.id << ", Username: " << row.username << ", Email: " << row.email << endl;
+}
+
 /// @brief Prepare the display for taking the input.
 void display_prompt() {
     cout << PROMPT;
@@ -235,6 +239,7 @@ pair<StatementPrepareState, Statement> prepare_insert(string& cmd) {
     statement.row.username[USERNAME_LENGTH] = '\0';
     statement.row.email[EMAIL_LENGTH] = '\0';
 
+    print_row(statement.row);
     statement.statement_command = STATEMENT_INSERT;
     return { PREPARE_SUCCESS, statement };
 }
@@ -273,10 +278,12 @@ void* get_row_slot(int32_t row_num, Table& table) {
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
     uint32_t byte_offset = row_offset * ROW_SIZE;
 
-    cout << "Table: " << &table << ", RowAddrs: " << static_cast<char*>(page) + byte_offset << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
     // NOTE: Ptr arithmetic doesnt work on void*, since char* is 1 byte, we cast it to char*
     // and it is implictly casted to void* when returned
-    return static_cast<char*>(page) + byte_offset;
+    char* row_addr = static_cast<char*>(page) + byte_offset;
+
+    cout << "Table: " << &table << ", RowAddrs: " << static_cast<void*>(row_addr) << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
+    return row_addr;
 }
 
 ExecuteResult execute_insert(Statement& statement, Table& table) {
@@ -303,7 +310,7 @@ ExecuteResult execute_select_all(Table& table) {
 
     for(uint32_t i = 0; i < table.num_rows; i++) {
         read_row(get_row_slot(i, table), row);
-        cout <<"[READ] Row_idx: " << get_row_slot(i, table) << ", Id: " << row.id << " " << row.username << " " << row.email << endl;
+        cout <<"[SELECT] Row_idx: " << get_row_slot(i, table) << ", Id: " << row.id << " " << row.username << " " << row.email << endl;
     }
 
     return EXECUTE_SUCCESS;
@@ -394,12 +401,13 @@ void repl_loop() {
                 cout << "Table is full, cannot insert the row..." << endl;
                 break;
         }
-
-        free_table(table);
     }
+  
+    free_table(table);
 }
 
 int main(int argc, char** argv) {
     repl_loop();
+    
     return 0;
 }
