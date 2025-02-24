@@ -306,6 +306,7 @@ ExecuteResult execute_insert(Statement& statement, Table& table) {
     if (DEBUG_MODE)
         cout <<"[INSERT] Id: " << row.id << " " << row.username << " " << row.email << endl;
     
+    cout << "Row inserted successfully." << endl;
     return EXECUTE_SUCCESS;
 }
 
@@ -314,7 +315,7 @@ ExecuteResult execute_select_all(Table& table) {
 
     for(uint32_t i = 0; i < table.num_rows; i++) {
         read_row(get_row_slot(i, table), row);
-        cout <<"[SELECT] Id: " << row.id << " " << row.username << " " << row.email << endl;
+        cout <<"[SELECT] (" << row.id << " " << row.username << " " << row.email << ")" << endl;
     }
 
     return EXECUTE_SUCCESS;
@@ -337,8 +338,6 @@ ExecuteResult execute_statement(Statement statement, Table& table) {
 void repl_loop() {
     InputBuffer input_buffer;
     Table table = create_table_factory();
-
-    cout << "Starting REPL loop..." << endl;
 
     while (true) {
         display_prompt();
@@ -399,7 +398,6 @@ void repl_loop() {
         // Once the statement preparation is completed, execute it
         switch(execute_statement(statement, table)) {
             case EXECUTE_SUCCESS:
-                cout << "Executed successfully." << endl;
                 break;
             case EXECUTE_TABLE_FULL:
                 cout << "Table is full, cannot insert the row." << endl;
