@@ -1,4 +1,19 @@
 describe 'database' do
+    before(:all) do
+        def build_db()
+            system("make")
+        end
+
+        build_db()
+    end
+
+    after(:all) do
+        def clean_db()
+            system("make clean")
+        end
+        clean_db()
+    end
+
     def run_script(commands)
       raw_output = nil
       IO.popen("./db.exe", "r+") do |pipe|
@@ -14,7 +29,7 @@ describe 'database' do
 
       raw_output.split("\n")
     end
-    
+
     it 'inserts and retrieves a row' do
       result = run_script([
         "insert 1 user1 person1@example.com",
