@@ -10,20 +10,24 @@ else
 	RUN_PREFIX = ./
 endif
 
-
+# Usage: make
 $(TARGET): db.cpp
 	@echo "Building project"
 	g++ db.cpp -o $(TARGET)
 
+# Usage: make run
 run: $(TARGET)
 	$(RUN_PREFIX).$(TARGET)
 
+# Usage: make test
 test: $(TARGET)
 	@echo "Running tests"
 	bundle exec rspec
 
+# Usage: make clean
 clean: $(TARGET)
 	@echo "Cleaning build files"
 	$(RM) $(TARGET)
 
+# For commands that don't create files and are to run always
 .PHONY: run test clean
