@@ -10,6 +10,7 @@ using namespace std;
 
 /// Display constants
 const string PROMPT = "> ";
+bool DEBUG_MODE = false;
 
 /*
 * Column size constants
@@ -239,7 +240,8 @@ pair<StatementPrepareState, Statement> prepare_insert(string& cmd) {
     statement.row.username[USERNAME_LENGTH] = '\0';
     statement.row.email[EMAIL_LENGTH] = '\0';
 
-    print_row(statement.row);
+    if (DEBUG_MODE)
+        print_row(statement.row);
     statement.statement_command = STATEMENT_INSERT;
     return { PREPARE_SUCCESS, statement };
 }
@@ -282,7 +284,8 @@ void* get_row_slot(int32_t row_num, Table& table) {
     // and it is implictly casted to void* when returned
     char* row_addr = static_cast<char*>(page) + byte_offset;
 
-    cout << "Table: " << &table << ", RowAddrs: " << static_cast<void*>(row_addr) << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
+    if (DEBUG_MODE)
+        cout << "Table: " << &table << ", RowAddrs: " << static_cast<void*>(row_addr) << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
     return row_addr;
 }
 
@@ -300,7 +303,7 @@ ExecuteResult execute_insert(Statement& statement, Table& table) {
     Row row;
     read_row(row_slot, row);
 
-    cout <<"[INSERT] Row_idx: " << row_slot << ", Id: " << row.id << " " << row.username << " " << row.email << endl;
+    cout <<"[INSERT] Id: " << row.id << " " << row.username << " " << row.email << endl;
     
     return EXECUTE_SUCCESS;
 }
@@ -317,8 +320,7 @@ ExecuteResult execute_select_all(Table& table) {
 }
 
 ExecuteResult execute_statement(Statement statement, Table& table) {
-    cout << "Statement " << statement.statement_command << " executed successfully..." << endl;
-
+    
     switch (statement.statement_command) {
         case STATEMENT_INSERT:
             return execute_insert(statement, table);
@@ -327,6 +329,8 @@ ExecuteResult execute_statement(Statement statement, Table& table) {
         case STATEMENT_DELETE:
             return EXECUTE_SUCCESS;
     }
+
+    cout << "Statement " << statement.statement_command << " executed successfully..." << endl;
 
     return EXECUTE_FAILURE;
 }
@@ -354,7 +358,8 @@ void repl_loop() {
             continue;
         }
 
-        cout << "Input: " << input_buffer.buffer << ", size: " << input_buffer.input_size << endl;
+        if (DEBUG_MODE)
+            cout << "Input: " << input_buffer.buffer << ", size: " << input_buffer.input_size << endl;
         
         // Handle meta commands, meta commands start with a '.' character
         if (input_buffer.buffer[0] == '.') {
@@ -395,7 +400,6 @@ void repl_loop() {
         // Once the statement preparation is completed, execute it
         switch(execute_statement(statement, table)) {
             case EXECUTE_SUCCESS:
-                cout << "Statement executed successfully..." << endl;
                 break;
             case EXECUTE_TABLE_FULL:
                 cout << "Table is full, cannot insert the row..." << endl;
@@ -406,7 +410,19 @@ void repl_loop() {
     free_table(table);
 }
 
+void parse_main_args(int argc, char** argv) {
+    for(int i = 0; i < argc; i++) {
+        string arg = argv[i];
+        cout << arg << endl;
+        if(arg == "--debug" || arg == "-d") {
+            DEBUG_MODE = true;
+            cout << "Debug mode enabled..." << endl;
+        }
+    }
+}
+
 int main(int argc, char** argv) {
+    parse_main_args(argc, argv);
     repl_loop();
     
     return 0;
