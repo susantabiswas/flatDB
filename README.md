@@ -2,30 +2,31 @@
 A simple flat file database like sqlite.
 
 
-# Dependencies
+## Dependencies
 
 ### make
-  #### Windows
-    install chocolately and then run:
-        ```
-        choco install make
-        ```
-### ruby
-  #### Windows
-  Install ruby for Windows either using the executable (https://rubyinstaller.org/downloads/) or choco
-        ```
-        choco install ruby
-        ```
+#### Windows
+install chocolately and then run:
+```
+choco install make
+```
 
-        confirm using
-        ```
-        ruby -v
-        ```
+### ruby
+#### Windows
+Install ruby for Windows either using the executable (https://rubyinstaller.org/downloads/) or choco
+```
+choco install ruby
+```
+
+confirm installation using
+```
+ruby -v
+```
 
 ### rails
-  ```
-  gem install rails
-  ```
+```
+gem install rails
+```
 
 ### Install rspec
 ```
