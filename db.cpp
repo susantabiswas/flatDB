@@ -217,26 +217,22 @@ pair<StatementPrepareState, Statement> prepare_insert(string& cmd) {
 
     // Syntax: insert id username email
     if (tokens.size() < 4) {
-        cerr << "Too few arguments for insert statement" << endl;
         return { PREPARE_INVALID_SYNTAX, statement };
     }
 
     for(string token: tokens) {
         if (token.empty()) {
-            cerr << "Empty token found" << endl;
             return { PREPARE_NULL_TOKEN, statement };
         }
     }
 
     if (tokens[2].size() > USERNAME_LENGTH || tokens[3].size() > EMAIL_LENGTH) {
-        cerr << (tokens[2].size() > USERNAME_LENGTH ? "Username" : "Email") << " too long" << endl;
         return { PREPARE_TOKEN_TOO_LONG, statement };
     }
     
     statement.row.id = stoll(tokens[1]);
 
     if (statement.row.id < 0) {
-        cerr << "ID cannot be negative" << endl;
         return { PREPARE_TOKEN_NEGATIVE, statement };
     }
 
@@ -324,6 +320,7 @@ ExecuteResult execute_select_all(Table& table) {
         cout <<"[SELECT] (" << row.id << " " << row.username << " " << row.email << ")" << endl;
     }
 
+    cout << "Returned " << table.num_rows << " rows." << endl;
     return EXECUTE_SUCCESS;
 }
 
