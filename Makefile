@@ -17,7 +17,10 @@ $(TARGET): db.cpp
 
 # Usage: make run
 run: $(TARGET)
-	$(RUN_PREFIX).$(TARGET)
+	$(RUN_PREFIX)$(TARGET)
+
+debug: $(TARGET)
+	$(RUN_PREFIX)$(TARGET) --debug
 
 # Usage: make test
 test: $(TARGET)

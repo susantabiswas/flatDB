@@ -22,7 +22,7 @@ const uint16_t EMAIL_LENGTH = 255;
 *   Table and Page size
 */
 const uint16_t PAGE_SIZE = 4 * 1024; // 4KB
-const uint16_t TABLE_MAX_PAGES = 1000;
+const uint16_t TABLE_MAX_PAGES = 100;
 
 /// @brief Represents the state of the meta command
 enum MetaCommandResult {
@@ -148,6 +148,13 @@ void print_row(Row& row) {
 /// @brief Prepare the display for taking the input.
 void display_prompt() {
     cout << PROMPT;
+}
+
+void init_db_info() {
+    if (DEBUG_MODE) {
+        cout << "TABLE_MAX_ROWS: " << TABLE_MAX_ROWS << ", ROW_SIZE: " << ROW_SIZE << endl;
+        cout << "TABLE_MAX_PAGES: " << TABLE_MAX_PAGES << ", PAGE_SIZE: " << PAGE_SIZE << ", ROWS_PER_PAGE: " << ROWS_PER_PAGE << endl;
+    }
 }
 
 InputResult read_input(InputBuffer& input_buffer) {
@@ -291,7 +298,6 @@ void* get_row_slot(int32_t row_num, Table& table) {
 
 ExecuteResult execute_insert(Statement& statement, Table& table) {
     if (table.num_rows >= TABLE_MAX_ROWS) {
-        cout << "[ERROR] Table is full" << endl;
         return EXECUTE_TABLE_FULL;
     }
 
@@ -338,6 +344,7 @@ ExecuteResult execute_statement(Statement statement, Table& table) {
 void repl_loop() {
     InputBuffer input_buffer;
     Table table = create_table_factory();
+    init_db_info();
 
     while (true) {
         display_prompt();
@@ -400,7 +407,7 @@ void repl_loop() {
             case EXECUTE_SUCCESS:
                 break;
             case EXECUTE_TABLE_FULL:
-                cout << "Table is full, cannot insert the row." << endl;
+                cout << "[ERROR] Table is full, cannot insert the row" << endl;
                 break;
         }
     }
