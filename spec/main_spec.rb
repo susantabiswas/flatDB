@@ -126,5 +126,25 @@ describe 'database' do
       "> Encountered exit, exiting..."
     ])
   end
+
+  it 'Data is persisted after closing connection' do
+    result1 = run_script([
+      "insert 1 user1 user1@example.com",
+      ".exit",
+    ])
+    expect(result1).to match_array([
+      "> Row inserted successfully.",
+      "> Encountered exit, exiting...",
+    ])
+    result2 = run_script([
+      "select",
+      ".exit",
+    ])
+    expect(result2).to match_array([
+      "> [SELECT] (1 user1 user1@example.com)",
+      "> Encountered exit, exiting..."
+    ])
+  end
+  
 end
   
