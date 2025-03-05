@@ -4,6 +4,10 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/stat.h>
 using namespace std;
 
 #define size_of_attribute(Struct, Attribute) sizeof(((Struct*)0)->Attribute)
@@ -79,13 +83,18 @@ struct Statement {
     Row row;
 };
 
+struct Pager {
+    int file_descriptor;
+    uint32_t file_length;
+    uint32_t num_pages;
+    
+    // cache of pages in memory
+    void* pages[TABLE_MAX_PAGES];
+};
+
 struct Table {
-    uint32_t num_rows;
-    // Free list of pages
-    // Each entry points to a memory page which
-    // is nothing but a block of memory and multiple rows
-    // can be stored in it.
-    void* pages[TABLE_MAX_PAGES]; 
+    Pager pager;
+    uint32_t num_rows; 
 };
 
 /*
@@ -108,20 +117,24 @@ const uint32_t TABLE_MAX_ROWS = TABLE_MAX_PAGES * ROWS_PER_PAGE;
 /*
 *   Factory methods
 */
-Table create_table_factory() {
-    Table table;
-    table.num_rows = 0;
+Pager pager_factory(int fd, uint32_t file_length) {
+    Pager pager;
 
     for(uint32_t i = 0; i < TABLE_MAX_PAGES; i++)
-        table.pages[i] = nullptr;
-    return table;
+        pager.pages[i] = nullptr;
+
+    pager.file_descriptor = fd;
+    pager.file_length = file_length;
+    pager.num_pages = file_length / PAGE_SIZE;
+    
+    return pager;
 }
 
 void free_table(Table& table) {
     for(uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
-        if (table.pages[i] != nullptr) {
-            free(table.pages[i]);
-            table.pages[i] = nullptr;
+        if (table.pager.pages[i] != nullptr) {
+            free(table.pager.pages[i]);
+            table.pager.pages[i] = nullptr;
         }
     }
 }
@@ -143,6 +156,169 @@ void read_row(void* row_slot, Row& row) {
 
 void print_row(Row& row) {
     cout << "[Row] ID: " << row.id << ", Username: " << row.username << ", Email: " << row.email << endl;
+}
+
+void* get_page(Pager& pager, uint32_t page_idx) {
+    if(page_idx >= TABLE_MAX_PAGES) {
+        cerr << "Page index out of bounds: " << page_idx << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // cache miss
+    if (pager.pages[page_idx] == nullptr) {
+        void* page = malloc(PAGE_SIZE);
+        memset(page, 0, PAGE_SIZE);
+
+        if (page == nullptr) {
+            cerr << "Unable to allocate memory for page" << endl;
+            exit(EXIT_FAILURE);
+        }
+
+        uint32_t num_pages = pager.file_length / PAGE_SIZE;
+
+        // Case: There can be scenario where the write op might have been
+        // disrupted (eg shutdown etc) and the last page was not written completely
+        // and only a part of the entire page was written. To handle that we treat
+        // that as complete page and let the system read the data till the pt which is 
+        // avail.
+        if(pager.file_length % PAGE_SIZE) {
+            num_pages += 1;
+        }
+
+        // if the request page is within the existing pages
+        if (page_idx < num_pages) {
+            // go to the starting position of this page and then load the page
+            lseek(pager.file_descriptor, page_idx * PAGE_SIZE, SEEK_SET);
+            ssize_t bytes_read = read(pager.file_descriptor, page, PAGE_SIZE);
+
+            if (bytes_read == -1) {
+                cerr << "Error reading file: " << errno << endl;
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        // cache the page
+        pager.pages[page_idx] = page;    
+        
+        // if this page didnt existed before, update the num_pages
+        if(page_idx >= num_pages) {
+            pager.num_pages = page_idx + 1;
+            
+            if (DEBUG_MODE)
+                cout << "Page Added: Idx: " << page_idx << ", Num_pages: " << pager.num_pages << endl;
+        }
+    }
+    
+    return pager.pages[page_idx];
+}
+
+Pager open_pager(string filename) {
+    int fd = open(
+        filename.c_str(),
+        O_RDWR | // R/W mode 
+            O_CREAT, // Create file if it does not exist
+        S_IWUSR | // User Write permission
+            S_IRUSR // User Read permission
+    );
+    
+    if (fd == -1) {
+        cout << "Unable to open file: " << filename << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // Position the fd to the last pos to get the file len
+    off_t file_len = lseek(fd, 0, SEEK_END);
+    // reposition to beginning of file
+    lseek(fd, 0, SEEK_SET);
+    
+    Pager pager = pager_factory(fd, file_len);
+
+    return pager;
+}
+
+Table open_db_conn(string filename) {
+    Table table;
+    
+    table.pager = open_pager(filename);
+    int32_t num_rows = table.pager.file_length / ROW_SIZE;
+    
+    // In the last page, there might be only few rows written and the
+    // remaining row slots are empty, detect the actual rows in the last page
+    if (num_rows > 0) {
+        Row empty_row = {0, "", ""};
+        Row row; 
+
+        void* last_page = get_page(table.pager, table.pager.num_pages - 1);
+
+        int32_t empty_rows = 0;
+        for(int i = 0; i < ROWS_PER_PAGE; i++) {
+            read_row(last_page + i * ROW_SIZE, row);
+            
+            if (memcmp(&row, &empty_row, ROW_SIZE) == 0) {
+                empty_rows++;
+            }
+        }
+
+        num_rows -= empty_rows;
+
+        if (DEBUG_MODE)
+            cout << "Found " << empty_rows << " empty rows in the last page" << endl;
+    }
+
+    table.num_rows = num_rows;
+    
+    if (DEBUG_MODE)
+        cout << "Loaded " << num_rows << " rows." << endl;
+
+    return table;
+}
+
+void flush_page(Pager& pager, uint32_t page_idx) {
+    int fd = pager.file_descriptor;
+
+    if (page_idx >= pager.num_pages) {
+        cerr << "Page index is out of bounds: " << page_idx << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (pager.pages[page_idx] == nullptr) {
+        cerr << "Null page cannot be flushed" << endl;
+        exit(EXIT_FAILURE);
+    }
+    
+    ssize_t pos = lseek(fd, page_idx * PAGE_SIZE, SEEK_SET);
+    if(pos == -1) {
+        cerr << "Error seeking the file: " << errno << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    ssize_t bytes_written = write(fd, pager.pages[page_idx], PAGE_SIZE);
+
+    if (bytes_written == -1) {
+        cerr << "Failed to save the data to disk." << endl;
+        exit(EXIT_FAILURE);
+    }
+}
+
+void close_db_conn(Table& table) {
+    Pager pager = table.pager;
+
+    // flush the database to disk
+    for(uint32_t i = 0; i < pager.num_pages; i++) {
+        if(pager.pages[i]) {
+            flush_page(pager, i);
+            free(pager.pages[i]);
+            pager.pages[i] = nullptr;
+        }
+    }
+
+    // close the fd and free up the pages
+    int result = close(pager.file_descriptor);
+    if(result == -1) {
+        cerr << "Error closing file descriptor: " << errno << endl;
+        exit(EXIT_FAILURE);
+    }
+
 }
 
 /// @brief Prepare the display for taking the input.
@@ -187,9 +363,10 @@ InputResult read_input(InputBuffer& input_buffer) {
     return InputResult::INVALID_INPUT;
 }
 
-MetaCommandResult run_metacommand(string& cmd) {
+MetaCommandResult run_metacommand(string& cmd, Table& table) {
     if (cmd == ".exit") {
         cout << "Encountered exit, exiting..." << endl;
+        close_db_conn(table);
         exit(EXIT_SUCCESS);
     }
     else {
@@ -268,17 +445,12 @@ pair<StatementPrepareState, Statement> prepare_statement_command(string& cmd) {
 }
 
 void* get_row_slot(int32_t row_num, Table& table) {
-    // NOTE: For now, we take the row index as the
+    // NOTE: For now, we take the row index (0 indexed) as the
     // next row after the last inserted row
+    // page_idx is again 0 indexed
     int32_t page_idx = row_num / ROWS_PER_PAGE;
 
-    void* page = table.pages[page_idx];
-
-    if (page == nullptr) {
-        page = malloc(PAGE_SIZE);
-        // since the page is allocated memory, set the address
-        table.pages[page_idx] = page;
-    }
+    void* page = get_page(table.pager, page_idx);
 
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
     uint32_t byte_offset = row_offset * ROW_SIZE;
@@ -338,9 +510,9 @@ ExecuteResult execute_statement(Statement statement, Table& table) {
     return EXECUTE_FAILURE;
 }
 
-void repl_loop() {
+void repl_loop(string filename) {
     InputBuffer input_buffer;
-    Table table = create_table_factory();
+    Table table = open_db_conn(filename);
     init_db_info();
 
     while (true) {
@@ -365,7 +537,7 @@ void repl_loop() {
         
         // Handle meta commands, meta commands start with a '.' character
         if (input_buffer.buffer[0] == '.') {
-            switch (run_metacommand(input_buffer.buffer)) {
+            switch (run_metacommand(input_buffer.buffer, table)) {
                 case MetaCommandResult::META_COMMAND_SUCCESS:
                     continue;
                 case MetaCommandResult::META_COMMAND_UNRECOGNIZED:
@@ -412,8 +584,15 @@ void repl_loop() {
     free_table(table);
 }
 
-void parse_main_args(int argc, char** argv) {
-    for(int i = 0; i < argc; i++) {
+string parse_main_args(int argc, char** argv) {
+    if (argc < 2) {
+        cerr << "Usage: db <db_filename> [--debug]" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    string filename = argv[1];
+
+    for(int i = 2; i < argc; i++) {
         string arg = argv[i];
         cout << arg << endl;
         if(arg == "--debug" || arg == "-d") {
@@ -421,11 +600,13 @@ void parse_main_args(int argc, char** argv) {
             cout << "Debug mode enabled." << endl;
         }
     }
+
+    return filename;
 }
 
 int main(int argc, char** argv) {
-    parse_main_args(argc, argv);
-    repl_loop();
+    string filename = parse_main_args(argc, argv);
+    repl_loop(filename);
     
     return 0;
 }
