@@ -1,4 +1,13 @@
 describe 'database' do
+  def clean_db_file(filename="testdb.db")
+    system("make clear file=#{filename}")
+  end
+
+  # before each test, clean the db file
+  before do
+    clean_db_file()
+  end
+    
   # Initial binary build of db
   before(:all) do
       def build_db()
@@ -14,11 +23,12 @@ describe 'database' do
           system("make clean")
       end
       clean_db()
+      clean_db_file()
   end
 
   def run_script(commands)
     raw_output = nil
-    IO.popen("./db.exe", "r+") do |pipe|
+    IO.popen("./db.exe testdb.db", "r+") do |pipe|
       commands.each do |command|
         pipe.puts command
       end
@@ -38,11 +48,10 @@ describe 'database' do
       "select",
       ".exit",
     ])
-
+    
     puts result
-
     # ignore the 1st element of result as that is print of running binary - './/db.exe'
-    result.shift()
+    # result.shift()
 
     expect(result).to match_array([
       "> Row inserted successfully.",
@@ -78,7 +87,6 @@ describe 'database' do
     ]
 
     result = run_script(script)
-    result.shift()
     
     expect(result).to match_array([
       "> Row inserted successfully.",
@@ -100,7 +108,6 @@ describe 'database' do
     ]
 
     result = run_script(script)
-    result.shift()
     
     expect(result).to match_array([
       "> Token too long: #{insert}",
@@ -118,7 +125,6 @@ describe 'database' do
     ]
 
     result = run_script(script)
-    result.shift()
     
     expect(result).to match_array([
       "> Negative token found: #{insert}",
@@ -127,24 +133,30 @@ describe 'database' do
     ])
   end
 
-  it 'Data is persisted after closing connection' do
-    result1 = run_script([
+  it 'Data is persisted even after DB is started again' do
+    # insert a row and confirm, then exit
+    result = run_script([
       "insert 1 user1 user1@example.com",
       ".exit",
     ])
-    expect(result1).to match_array([
+
+    expect(result).to match_array([
       "> Row inserted successfully.",
-      "> Encountered exit, exiting...",
+      "> Encountered exit, exiting..."
     ])
-    result2 = run_script([
+
+    # open a new connection and check if the row is still there
+    result = run_script([
       "select",
       ".exit",
     ])
-    expect(result2).to match_array([
+
+    expect(result).to match_array([
       "> [SELECT] (1 user1 user1@example.com)",
+      "Returned 1 rows.",
       "> Encountered exit, exiting..."
     ])
+
   end
-  
 end
   
