@@ -97,6 +97,12 @@ struct Table {
     uint32_t num_rows; 
 };
 
+struct Cursor {
+    Table* table;
+    int32_t row_num;
+    bool end_of_table; // whether the cursor is at the end of table.
+};
+
 /*
 *   Row layout related
 */
@@ -210,6 +216,50 @@ void* get_page(Pager& pager, uint32_t page_idx) {
     }
     
     return pager.pages[page_idx];
+}
+
+Cursor table_begin(Table& table) {
+    Cursor cursor;
+    cursor.table = &table;
+    cursor.row_num = 0;
+    cursor.end_of_table = (table.num_rows == 0);
+
+    return cursor;
+}
+
+Cursor table_end(Table& table) {
+    Cursor cursor;
+    cursor.table = &table;
+    cursor.row_num = table.num_rows;
+    cursor.end_of_table = true;
+    return cursor;
+}
+
+void* get_cursor_addr(Cursor& cursor) {
+    // NOTE: For now, we take the row index (0 indexed) as the
+    // next row after the last inserted row
+    // page_idx is again 0 indexed
+    int32_t row_num = cursor.row_num;
+    int32_t page_idx = row_num / ROWS_PER_PAGE;
+
+    void* page = get_page(cursor.table->pager, page_idx);
+
+    uint32_t row_offset = row_num % ROWS_PER_PAGE;
+    uint32_t byte_offset = row_offset * ROW_SIZE;
+
+    // NOTE: Ptr arithmetic doesnt work on void*, since char* is 1 byte, we cast it to char*
+    // and it is implictly casted to void* when returned
+    char* row_addr = static_cast<char*>(page) + byte_offset;
+
+    if (DEBUG_MODE)
+        cout << "RowAddrs: " << static_cast<void*>(row_addr) << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
+    return row_addr;
+}
+
+void cursor_next(Cursor& cursor) {
+    ++cursor.row_num;
+    if (cursor.row_num >= cursor.table->num_rows)
+        cursor.end_of_table = true;
 }
 
 Pager open_pager(string filename) {
@@ -469,8 +519,10 @@ ExecuteResult execute_insert(Statement& statement, Table& table) {
         return EXECUTE_TABLE_FULL;
     }
 
-    // find a free slot in the table
-    void* row_slot = get_row_slot(table.num_rows, table);
+    // row is inserted at the end of table
+    Cursor cursor = table_end(table);
+
+    void* row_slot = get_cursor_addr(cursor);
     write_row(row_slot, statement.row);
     ++table.num_rows;
 
@@ -487,8 +539,13 @@ ExecuteResult execute_insert(Statement& statement, Table& table) {
 ExecuteResult execute_select_all(Table& table) {
     Row row;
 
-    for(uint32_t i = 0; i < table.num_rows; i++) {
-        read_row(get_row_slot(i, table), row);
+    // Get the cursor to the beginning of table
+    Cursor cursor = table_begin(table);
+    while(!cursor.end_of_table) {
+        void* cursor_addr = get_cursor_addr(cursor);
+        read_row(cursor_addr, row);
+        cursor_next(cursor);
+
         cout <<"[SELECT] (" << row.id << " " << row.username << " " << row.email << ")" << endl;
     }
 
