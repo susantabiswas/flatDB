@@ -40,7 +40,7 @@ enum ExecuteResult {
     EXECUTE_FAILURE
 };
 
-/// @brief Represents the various SQL statements
+/// @brief Represents the various database statements
 enum StatementCommand {
     STATEMENT_SELECT,
     STATEMENT_INSERT,
@@ -65,6 +65,13 @@ enum InputResult {
     STREAM_ERROR,
     INVALID_INPUT
 };
+
+enum NodeType {
+    INTERNAL,
+    LEAF
+};
+
+
 
 /// @brief Console Input representation
 struct InputBuffer {
@@ -104,8 +111,8 @@ struct Cursor {
 };
 
 /*
-*   Row layout related
-*/
+ *   Row layout related
+ */
 const uint32_t ID_SIZE = size_of_attribute(Row, id);
 const uint32_t ID_OFFSET = 0;
 const uint32_t USERNAME_SIZE = size_of_attribute(Row, username);
@@ -115,14 +122,84 @@ const uint32_t EMAIL_OFFSET = USERNAME_OFFSET + USERNAME_SIZE;
 const uint32_t ROW_SIZE = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
 
 /*
-* Storage related constants
-*/
+ * Storage related constants
+ */
 const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
 const uint32_t TABLE_MAX_ROWS = TABLE_MAX_PAGES * ROWS_PER_PAGE;
 
 /*
-*   Factory methods
+ * @brief B+ Tree Node Metadata 
+ */
+///////////// Common Node Header Layout //////////////
+// Unlike the plain array storage implementation, when we use a tree, we 
+// will need extra metadata to manage the tree structure and the context for
+// each node. Each node will have a common header layout which will be used.
+
+// NODE_TYPE(1 byte) | IS_ROOT(1 byte) | PARENT_POINTER(4 bytes)
+const uint32_t NODE_TYPE_SIZE = sizeof(NodeType);
+const uint32_t NODE_TYPE_OFFSET = 0;
+const uint32_t IS_ROOT_SIZE = sizeof(bool);
+const uint32_t IS_ROOT_OFFSET = NODE_TYPE_SIZE;
+const uint32_t PARENT_POINTER_SIZE = sizeof(uint32_t);
+const uint32_t PARENT_POINTER_OFFSET = IS_ROOT_OFFSET + IS_ROOT_SIZE;
+const uint32_t COMMON_NODE_HEADER_SIZE =
+    NODE_TYPE_SIZE + IS_ROOT_SIZE + PARENT_POINTER_SIZE;
+
+//////////// Leaf Node Header Layout //////////////
+// A leaf node will also need to track how many cells are part of it.
+// An internal node in B+ tree doesnt store data so this is only required
+// for the leaf nodes.
+
+// COMMON_HEADER + NUM_CELLS(4 bytes)
+const uint32_t LEAF_NODE_NUM_CELLS = sizeof(uint32_t);
+const uint32_t LEAF_NODE_NUM_CELLS_OFFSET = COMMON_NODE_HEADER_SIZE;
+const uint32_t LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE + LEAF_NODE_HEADER_SIZE;
+
+//////////// Leaf Node Body Layout //////////////
+const uint32_t LEAF_NODE_KEY_SIZE = sizeof(uint32_t);
+const uint32_t LEAF_NODE_KEY_OFFSET = 0;
+const uint32_t LEAF_NODE_VALUE_SIZE = ROW_SIZE;
+const uint32_t LEAF_NODE_VALUE_OFFSET = 
+    LEAF_NODE_KEY_OFFSET + LEAF_NODE_KEY_SIZE;
+const uint32_t LEAF_NODE_CELL_SIZE = 
+    LEAF_NODE_KEY_SIZE + LEAF_NODE_VALUE_SIZE;
+const uint32_t LEAF_NODE_SPACE_FOR_CELLS = 
+    PAGE_SIZE - LEAF_NODE_HEADER_SIZE;
+const uint32_t LEAF_NODE_MAX_CELLS =
+    LEAF_NODE_SPACE_FOR_CELLS / LEAF_NODE_CELL_SIZE;
+
+
+/*
+* Leaf node accessors
 */
+uint32_t* get_leaf_node_num_cells_offset(void* node) {
+    return static_cast<uint32_t*>(node) + LEAF_NODE_NUM_CELLS_OFFSET;
+}
+
+void init_leaf_node(void* node) {
+    uint32_t* num_cells = get_leaf_node_num_cells_offset(node);
+    *num_cells = 0;
+}
+
+void* get_leaf_node_cell(void* node, uint32_t cell_idx) {
+    // Node: Header + Cell_0 + Cell_1 + ... + Cell_n
+    // Cell_i = Key + Value (Row)
+    return static_cast<char*>(node) + LEAF_NODE_HEADER_SIZE + (cell_idx * LEAF_NODE_CELL_SIZE);
+}
+
+uint32_t* get_leaf_node_key(void* node, uint32_t cell_idx) {
+    return static_cast<uint32_t*>(get_leaf_node_cell(node, cell_idx));
+}
+
+void* get_leaf_node_value(void* node, uint32_t cell_idx) {
+    void* cell = get_leaf_node_cell(node, cell_idx);
+    return static_cast<char*>(cell) + LEAF_NODE_VALUE_OFFSET;
+}
+
+
+/*
+ *   Factory methods
+ */
 Pager pager_factory(int fd, uint32_t file_length) {
     Pager pager;
 
