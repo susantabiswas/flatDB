@@ -101,12 +101,14 @@ struct Pager {
 
 struct Table {
     Pager pager;
-    uint32_t num_rows; 
+    uint32_t num_rows;
+    uint32_t root_page_num;
 };
 
 struct Cursor {
     Table* table;
-    int32_t row_num;
+    uint32_t page_num; // 0 indexed
+    uint32_t cell_num; // 0 indexed
     bool end_of_table; // whether the cursor is at the end of table.
 };
 
@@ -153,7 +155,7 @@ const uint32_t COMMON_NODE_HEADER_SIZE =
 // COMMON_HEADER + NUM_CELLS(4 bytes)
 const uint32_t LEAF_NODE_NUM_CELLS = sizeof(uint32_t);
 const uint32_t LEAF_NODE_NUM_CELLS_OFFSET = COMMON_NODE_HEADER_SIZE;
-const uint32_t LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE + LEAF_NODE_HEADER_SIZE;
+const uint32_t LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE + LEAF_NODE_NUM_CELLS;
 
 //////////// Leaf Node Body Layout //////////////
 const uint32_t LEAF_NODE_KEY_SIZE = sizeof(uint32_t);
@@ -179,6 +181,11 @@ uint32_t* get_leaf_node_num_cells_offset(void* node) {
 void init_leaf_node(void* node) {
     uint32_t* num_cells = get_leaf_node_num_cells_offset(node);
     *num_cells = 0;
+}
+
+// Get the address where the no. of cells for a node is stored
+uint32_t* get_leaf_node_cells(void* node) {
+    return static_cast<uint32_t*>(node) + LEAF_NODE_NUM_CELLS_OFFSET;
 }
 
 void* get_leaf_node_cell(void* node, uint32_t cell_idx) {
@@ -265,6 +272,7 @@ void* get_page(Pager& pager, uint32_t page_idx) {
         // that as complete page and let the system read the data till the pt which is 
         // avail.
         if(pager.file_length % PAGE_SIZE) {
+            cout << "[WRN] Partial page found at the end of file" << endl;
             num_pages += 1;
         }
 
@@ -298,8 +306,15 @@ void* get_page(Pager& pager, uint32_t page_idx) {
 Cursor table_begin(Table& table) {
     Cursor cursor;
     cursor.table = &table;
-    cursor.row_num = 0;
-    cursor.end_of_table = (table.num_rows == 0);
+    cursor.page_num = table.root_page_num;
+    cursor.cell_num = 0;
+
+    // get the page of root node and using that check if there
+    // are cells in the tree
+    void* page = get_page(table.pager, table.root_page_num);
+    uint32_t num_cells = *get_leaf_node_cells(page);
+    // if there are no leaf nodes, then the table is empty
+    cursor.end_of_table = (num_cells == 0);
 
     return cursor;
 }
@@ -307,35 +322,40 @@ Cursor table_begin(Table& table) {
 Cursor table_end(Table& table) {
     Cursor cursor;
     cursor.table = &table;
-    cursor.row_num = table.num_rows;
+    cursor.page_num = table.root_page_num;
+
+    void* page = get_page(table.pager, table.root_page_num);
+    uint32_t num_cells = *get_leaf_node_cells(page);
+    cursor.cell_num = num_cells;
+
     cursor.end_of_table = true;
+
     return cursor;
 }
 
-void* get_cursor_addr(Cursor& cursor) {
+void* get_cursor_value_addr(Cursor& cursor) {
     // NOTE: For now, we take the row index (0 indexed) as the
     // next row after the last inserted row
     // page_idx is again 0 indexed
-    int32_t row_num = cursor.row_num;
-    int32_t page_idx = row_num / ROWS_PER_PAGE;
+    int32_t page_idx = cursor.page_num;
 
     void* page = get_page(cursor.table->pager, page_idx);
 
-    uint32_t row_offset = row_num % ROWS_PER_PAGE;
-    uint32_t byte_offset = row_offset * ROW_SIZE;
-
-    // NOTE: Ptr arithmetic doesnt work on void*, since char* is 1 byte, we cast it to char*
-    // and it is implictly casted to void* when returned
-    char* row_addr = static_cast<char*>(page) + byte_offset;
+    void* cell_val_addr = get_leaf_node_value(page, cursor.cell_num);
 
     if (DEBUG_MODE)
-        cout << "RowAddrs: " << static_cast<void*>(row_addr) << " , Row_num: " << row_num << ", Page_idx: " << page_idx << ", Row_offset: " << row_offset << ", Byte_offset: " << byte_offset << endl;
-    return row_addr;
+        cout << "CellAddrs: " << static_cast<void*>(cell_val_addr) << " , cell_num: " << cursor.cell_num << ", Page_idx: " << page_idx << endl;
+    return cell_val_addr;
 }
 
 void cursor_next(Cursor& cursor) {
-    ++cursor.row_num;
-    if (cursor.row_num >= cursor.table->num_rows)
+    ++cursor.cell_num;
+    uint32_t page_num = cursor.page_num;
+
+    void* page = get_page(cursor.table->pager, page_num);
+    uint32_t num_cells = *get_leaf_node_cells(page);
+
+    if (cursor.cell_num >= num_cells)
         cursor.end_of_table = true;
 }
 
@@ -367,10 +387,20 @@ Table open_db_conn(string filename) {
     Table table;
     
     table.pager = open_pager(filename);
+    table.root_page_num = 0;
+
+    // New database, so initialize the first page as leaf node
+    if (table.pager.num_pages == 0) {
+        void* root = get_page(table.pager, 0);
+        init_leaf_node(root);
+    }
+
     int32_t num_rows = table.pager.file_length / ROW_SIZE;
     
-    // In the last page, there might be only few rows written and the
-    // remaining row slots are empty, detect the actual rows in the last page
+    // Case: Partial last page -> In the last page, there might be only few rows written and the
+    // remaining row slots are empty, detect the actual rows in the last page.
+    // For a partially filled page, we still load the entire page in the memory and hence we
+    // need to know how many rows are actually filled in the last page.
     if (num_rows > 0) {
         Row empty_row = {0, "", ""};
         Row row; 
@@ -448,15 +478,68 @@ void close_db_conn(Table& table) {
 
 }
 
+void* insert_leaf_node(Cursor cursor, uint32_t key, Row row) {
+    void* node = get_page(cursor.table->pager, cursor.page_num);
+    uint32_t num_cells = *get_leaf_node_num_cells_offset(node);
+
+    // Case: Leaf node is full
+    if(num_cells >= LEAF_NODE_MAX_CELLS) {
+        cerr << "Leaf node is full, cannot insert more cells" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // the cursor points to the position where the row should be inserted
+    // To insert that row at ith pos, we move all the i ... nth cells to i+1 ... n+1
+    if (cursor.cell_num < num_cells) {
+        for(uint32_t i = num_cells; i > cursor.cell_num; i--)
+            memcpy(get_leaf_node_cell(node, i), get_leaf_node_cell(node, i-1), ROW_SIZE);
+    }
+
+    // insert the row at the ith position
+    *(get_leaf_node_key(node, cursor.cell_num)) = key;
+    void* row_addr = get_leaf_node_value(node, cursor.cell_num);
+    write_row(row_addr, row);
+
+    // cell count is increased
+    *(get_leaf_node_cells(node)) += 1;
+
+    return static_cast<char*>(row_addr);
+}
+
 /// @brief Prepare the display for taking the input.
 void display_prompt() {
     cout << PROMPT;
+}
+
+void display_leaf_node(void* node) {
+    // displays the row cells
+    uint32_t num_cells = *get_leaf_node_cells(node);
+    
+    cout << "Page addr: " << static_cast<char*>(node) << ", Total cells: " << num_cells << endl;
+    for(uint32_t i = 0; i < num_cells; i++) {
+        cout << "cell " << i << ": " << " key: " << *get_leaf_node_key(node, i) << " ";
+        
+        if (DEBUG_MODE) {
+            Row row;
+            read_row(get_leaf_node_value(node, i), row);
+            print_row(row);
+        }
+        cout << endl;
+    }
 }
 
 void init_db_info() {
     if (DEBUG_MODE) {
         cout << "TABLE_MAX_ROWS: " << TABLE_MAX_ROWS << ", ROW_SIZE: " << ROW_SIZE << endl;
         cout << "TABLE_MAX_PAGES: " << TABLE_MAX_PAGES << ", PAGE_SIZE: " << PAGE_SIZE << ", ROWS_PER_PAGE: " << ROWS_PER_PAGE << endl;
+    
+        cout << "BTree info..." << endl;
+        cout << "............Common Header............" << endl;
+        cout << "NODE_TYPE_SIZE: " << NODE_TYPE_SIZE << ", IS_ROOT_SIZE: " << IS_ROOT_SIZE << ", PARENT_POINTER_SIZE: " << PARENT_POINTER_SIZE << endl;
+        cout << "COMMON_NODE_HEADER_SIZE: " << COMMON_NODE_HEADER_SIZE << endl;
+        cout << "............Leaf Node Header............" << endl;
+        cout << "LEAF_NODE_NUM_CELLS: " << LEAF_NODE_NUM_CELLS << ", LEAF_NODE_NUM_CELLS_OFFSET: " << LEAF_NODE_NUM_CELLS_OFFSET << endl;
+        cout << "LEAF_NODE_HEADER_SIZE: " << LEAF_NODE_HEADER_SIZE << endl;
     }
 }
 
@@ -495,6 +578,11 @@ MetaCommandResult run_metacommand(string& cmd, Table& table) {
         cout << "Encountered exit, exiting..." << endl;
         close_db_conn(table);
         exit(EXIT_SUCCESS);
+    }
+    else if(cmd == ".btree") {
+        cout << "Printing B+ Tree..." << endl;
+        display_leaf_node(get_page(table.pager, table.root_page_num));
+        return MetaCommandResult::META_COMMAND_SUCCESS;
     }
     else {
         return MetaCommandResult::META_COMMAND_UNRECOGNIZED;
@@ -592,23 +680,25 @@ void* get_row_slot(int32_t row_num, Table& table) {
 }
 
 ExecuteResult execute_insert(Statement& statement, Table& table) {
-    if (table.num_rows >= TABLE_MAX_ROWS) {
+    void* node = get_page(table.pager, table.root_page_num);
+
+    if (*get_leaf_node_cells(node) >= LEAF_NODE_MAX_CELLS) {
         return EXECUTE_TABLE_FULL;
     }
 
     // row is inserted at the end of table
     Cursor cursor = table_end(table);
 
-    void* row_slot = get_cursor_addr(cursor);
-    write_row(row_slot, statement.row);
+    Row row = statement.row;
+    void* row_addr = insert_leaf_node(cursor, row.id, row);
     ++table.num_rows;
 
-    Row row;
-    read_row(row_slot, row);
-
-    if (DEBUG_MODE)
+    if (DEBUG_MODE) {
+        Row row;
+        read_row(row_addr, row);
         cout <<"[INSERT] Id: " << row.id << " " << row.username << " " << row.email << endl;
-    
+    }
+
     cout << "Row inserted successfully." << endl;
     return EXECUTE_SUCCESS;
 }
@@ -619,7 +709,7 @@ ExecuteResult execute_select_all(Table& table) {
     // Get the cursor to the beginning of table
     Cursor cursor = table_begin(table);
     while(!cursor.end_of_table) {
-        void* cursor_addr = get_cursor_addr(cursor);
+        void* cursor_addr = get_cursor_value_addr(cursor);
         read_row(cursor_addr, row);
         cursor_next(cursor);
 
